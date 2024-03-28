@@ -1,0 +1,1083 @@
+---
+title: "60603A  - Predictive Maintenance"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+### Import librairies
+
+```{r}
+#Import libraries
+pacman::p_load(pacman, tidyverse, ggplot2, car, matlib, emmeans, nlme)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, results='hide'}
+library(ggplot2)
+library(magrittr)
+library(dplyr)
+library(pastecs)
+library(plotly)
+library(GGally)
+library("psych")
+library("corrplot")
+library(emmeans)
+library(nlme)
+library(car)
+library(ggstatsplot)
+library(gapminder)
+library(dplyr)
+library(mogavs)
+library(lubridate)
+library(smotefamily)
+library(tidyverse)
+library(smotefamily)
+library(caret)
+library(leaps)
+library(xgboost)
+library(ggfortify)
+```
+
+```{r}
+#Set drive and import data
+#setwd("~/03 - School/M Sc Data Science/60603A - Statistical Learning/Team Project/PredictiveMaintenance-1.0.1")
+
+repairs <- read.csv("repairs.csv")
+sstudy <- read.csv("sensors-study.csv")
+sscore <- read.csv("sensors-score.csv")
+```
+
+## DATA PREPROCESSING
+```{r}
+##_____________________
+##DATA PREPARATION
+
+#id of 6 and 12 months repair
+n_study=nrow(repairs)
+id6 <- repairs$ID[complete.cases(repairs)]
+id12 <- setdiff(1:n_study,id6)
+
+
+#prep-ing repair
+#removing 500 base cost, it will depend on # of maintenance
+repairs$Cost12 <- repairs$Cost12-500
+repairs$Cost6 <- repairs$Cost6-500
+#removing NAs for no maintenance at 6 months
+repairs$Bill6[is.na(repairs$Bill6)] <- "No maintenance"
+repairs$Cost6[is.na(repairs$Cost6)] <- 0
+#key for maintenance frequency in study
+repairs$Maint6 <- as.numeric(repairs$ID==id6)
+
+#adding repair info to sstudy
+full_data <- left_join(sstudy, repairs, by = "ID")
+head(full_data)
+nrow(full_data)
+
+##Repair type table and cost
+rep_type <- as.data.frame(list(c(3,0,1,4,2,6), levels(as.factor(repairs$Bill6)), c(200,0,0,250,100,4000)))
+rep_type <- rep_type %>%
+  "colnames<-"(c("typeID", "Bill", "FixCost")) %>%
+  arrange(typeID)
+
+# pulling data on 6 month maintenance
+full_data6.1 <- full_data %>%
+  filter(Maint6==1) %>%
+  select(-Bill12, -Cost12) %>%
+  filter(Month <=6) %>%
+  "colnames<-"(c(colnames(full_data)[1:10],"Bill","Cost","Maint"))
+
+full_data6.2 <- full_data %>%
+  filter(Maint6==1) %>%
+  select(-Bill6, -Cost6) %>%
+  filter(Month >6) %>%
+  mutate(
+    Month=Month-6,
+    ID=ID+0.1) %>%
+  "colnames<-"(c(colnames(full_data)[1:10],"Bill","Cost","Maint"))
+
+full_data6 <- full_data6.1 %>%
+  rbind(full_data6.2) %>%
+  inner_join(rep_type, by="Bill") %>%
+  select(-FixCost)
+
+#pulling data on 12 month maintenance
+full_data12 <- full_data %>%
+  filter(Maint6==0) %>%
+  select(-Bill6, -Cost6) %>%
+  "colnames<-"(c(colnames(full_data)[1:10],"Bill","Cost","Maint")) %>%
+  inner_join(rep_type, by="Bill") %>%
+  select(-FixCost)
+
+full_data <- full_data %>%
+  select(-Bill6, -Cost6) %>%
+  "colnames<-"(c(colnames(full_data)[1:10],"Bill","Cost","Maint")) %>%
+  inner_join(rep_type, by="Bill") %>%
+  select(-FixCost)
+
+head(full_data)
+rm(full_data6.1, full_data6.2)
+
+# EDA using the 12 months
+data12 <- full_data12
+data12$Billnow [data12$Month!=6 & data12$Month!= 12]<-"No maintenance"
+data12$typeIDnow [data12$Month!=6 & data12$Month!= 12]<-0
+data12$typeIDnow [is.na(data12$Billnow)] <- data12$typeID
+data12$Billnow[is.na(data12$Billnow)]<- data12$Bill
+# EDA using the 6 months
+data6 <- full_data6
+data6$Billnow [data6$Month!=6]<-"No maintenance"
+data6$Billnow[is.na(data6$Billnow)]<- data6$Bill
+data6$typeIDnow [data6$Month!=6]<-0
+data6$typeIDnow [is.na(data6$Billnow)] <- data6$typeID
+
+full_data6 <- full_data6 %>% mutate(typeID=
+                case_when(typeID==1~1, typeID==2~2, typeID==3~3, typeID==4~4, typeID==6~5))
+full_data12 <- full_data12 %>% mutate(typeID=
+                case_when(typeID==1~1, typeID==2~2, typeID==3~3, typeID==4~4, typeID==6~5))
+
+full_data <- full_data %>% mutate(typeID=
+                case_when(typeID==1~1, typeID==2~2, typeID==3~3, typeID==4~4, typeID==6~5))
+nrow(full_data)
+
+full_data_1 <- full_data %>% mutate(typeID=
+                case_when(typeID==1~1, typeID==2~2, typeID==3~2, typeID==4~2, typeID==5~3))
+```
+
+### Data scaling
+
+```{r}
+# Study 6 months
+norm_data6 <- full_data6[, c(3:10)]
+norm_data6=data.frame(apply(norm_data6[1:8],2,scale))
+norm_data6 <- cbind(norm_data6, typeID = full_data6$typeID, Month = full_data6$Month, ID= full_data6$ID)
+
+# Study 12 Months
+norm_data12 <- full_data12[, c(3:10)]
+norm_data12=data.frame(apply(norm_data12[1:8],2,scale))
+norm_data12 <- cbind(norm_data12, typeID = full_data12$typeID, Month = full_data12$Month, ID= full_data12$ID)
+
+# Merge the two study together 
+norm_combine <- rbind(norm_data6, norm_data12)
+```
+
+## Feature engineering
+
+### Lag features
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# calculate the rolling mean and rolling standard deviation 
+# on the last 3 month lag window (width=3), for every 3 month (by=3)
+# for each machine ID.
+library(zoo)
+# Mean
+sensor_mean <- norm_combine %>%
+    arrange(ID, Month) %>% 
+    group_by(ID) %>%
+    mutate(PSD500mean = rollapply(PSD500, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           Volumemean = rollapply(Volume, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           Energymean = rollapply(Energy, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           PSD1000mean = rollapply(PSD1000, width = 5, FUN = mean, align = "right", fill = NA, by = 1), 
+           PSD1500mean = rollapply(PSD1500, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           PSD2000mean = rollapply(PSD2000, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           PSD2500mean = rollapply(PSD2500, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           PSD3000mean = rollapply(PSD3000, width = 5, FUN = mean, align = "right", fill = NA, by = 1)) %>%
+    select(Month, ID, PSD500mean, Volumemean, Energymean, PSD1000mean, PSD1500mean, PSD2000mean, PSD2500mean, PSD3000mean) %>%
+    filter(!is.na(PSD500mean))%>% 
+    ungroup()
+
+head(sensor_mean)
+summary(sensor_mean)
+# Rolling std
+sensor_std <- norm_combine %>%
+    arrange(ID, Month) %>% 
+    group_by(ID) %>%
+    mutate(PSD500std = rollapply(PSD500, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           Volumestd = rollapply(Volume, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           Energystd = rollapply(Energy, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           PSD1000std = rollapply(PSD1000, width = 5, FUN = sd, align = "right", fill = NA, by = 1), 
+           PSD1500std = rollapply(PSD1500, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           PSD2000std = rollapply(PSD2000, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           PSD2500std = rollapply(PSD2500, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           PSD3000std = rollapply(PSD3000, width = 5, FUN = sd, align = "right", fill = NA, by = 1)) %>%
+    select(Month, ID, PSD500std, Volumestd, Energystd, PSD1000std, PSD1500std, PSD2000std, PSD2500std, PSD3000std) %>%
+    filter(!is.na(PSD500std))%>% 
+    ungroup()
+
+sensor_max <- norm_combine %>%
+    arrange(ID, Month) %>% 
+    group_by(ID) %>%
+    mutate(PSD500max = rollapply(PSD500, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           Volumemax = rollapply(Volume, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           Energymax = rollapply(Energy, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           PSD1000max = rollapply(PSD1000, width = 5, FUN = max, align = "right", fill = NA, by = 1), 
+           PSD1500max = rollapply(PSD1500, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           PSD2000max = rollapply(PSD2000, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           PSD2500max = rollapply(PSD2500, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           PSD3000max = rollapply(PSD3000, width = 5, FUN = max, align = "right", fill = NA, by = 1)) %>%
+    select(Month, ID, PSD500max, Volumemax, Energymax, PSD1000max, PSD1500max, PSD2000max, PSD2500max, PSD3000max) %>%
+  filter(!is.na(PSD500max)) %>% 
+    ungroup()
+
+sensor_min <- norm_combine %>%
+    arrange(ID, Month) %>% 
+    group_by(ID) %>%
+    mutate(PSD500min = rollapply(PSD500, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           Volumemin = rollapply(Volume, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           Energymin = rollapply(Energy, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           PSD1000min = rollapply(PSD1000, width = 5, FUN = min, align = "right", fill = NA, by = 1), 
+           PSD1500min = rollapply(PSD1500, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           PSD2000min = rollapply(PSD2000, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           PSD2500min = rollapply(PSD2500, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           PSD3000min = rollapply(PSD3000, width = 5, FUN = min, align = "right", fill = NA, by = 1)) %>%
+    select(Month, ID, PSD500min, Volumemin, Energymin, PSD1000min, PSD1500min, PSD2000min, PSD2500min, PSD3000min) %>%
+    filter(!is.na(PSD500min)) %>% 
+    ungroup()
+```
+
+#### Merging the two
+
+```{r include=FALSE}
+# merge columns of feature sets created earlier
+merge_meanstd <- data.frame(sensor_mean, sensor_std[,-c(1:2)], sensor_max[,-c(1:2)], sensor_min[,-c(1:2)]) 
+
+df <- norm_combine %>%
+                 left_join(merge_meanstd, by = c("Month", "ID")) %>%
+                 filter(!is.na(PSD500std)) %>% 
+                 ungroup
+df_100 <- df %>% filter(ID>=101) 
+```
+
+## Train test split (Keeping ID grouped)
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Randomly assign train/test groups to all values of ID
+set.seed(1)
+groups <-
+  df %>%
+  select(ID) %>%
+  distinct(ID) %>%
+  rowwise() %>%
+  mutate(group = sample(
+    c("train", "test"),
+    1,
+    replace = TRUE,
+    prob = c(0.7, 0.3) # Set weights for each group here
+  ))
+
+groups
+
+# Join group assignments to my_dat
+train_test <- df %>%
+  left_join(groups)
+
+# Train dataset
+train <- filter(train_test, group == "train")
+train <- train[,-44]
+
+test <- filter(train_test, group == "test")
+test <- test[,-44]
+```
+
+# Decision Tree Algorithm
+
+```{r}
+library(rpart)
+library(rpart.plot)
+
+# Not showing the AIC procedure
+aic_1 <- train[, c("typeID", "Volume", "Energy", "Volumemean", "Energymean", "PSD1000mean", "PSD2000mean", "PSD500std", "Volumestd", "PSD1500std", "PSD2000std", "PSD2500std", "PSD1500max", "PSD2000max", "PSD2500max", "PSD1500min", "PSD2000min")]
+
+# Test
+set.seed(500)
+
+tree_3 <- rpart(typeID ~., data = aic_1, method="class")
+
+cp_optimal=tree_3$cptable[which.min(tree_3$cptable[,4]),1]
+
+mytree3_optimal = prune(tree_3,cp=cp_optimal)
+prp(mytree3_optimal,extra=1,roundint=FALSE)
+
+# Classification matrix of train
+set.seed(500)
+mytable=table(aic_1[,1], predict(mytree3_optimal,train, type="class"))
+names(dimnames(mytable))= c("Observed", "Predicted")
+mytable
+```
+
+# Prediction and confusion matrix
+
+```{r}
+set.seed(500)
+mytable=table(test[,9], predict(mytree3_optimal,test[, c(-9, -11)], type="class"))
+names(dimnames(mytable))= c("Observed", "Predicted")
+mytable
+```
+
+## Prediction on the submission file
+
+### Format the submission file in the same way as mine
+
+```{r}
+score_mean <- sscore %>%
+    arrange(ID, Month) %>% 
+    group_by(ID) %>%
+    mutate(PSD500mean = rollapply(PSD500, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           Volumemean = rollapply(Volume, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           Energymean = rollapply(Energy, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           PSD1000mean = rollapply(PSD1000, width = 5, FUN = mean, align = "right", fill = NA, by = 1), 
+           PSD1500mean = rollapply(PSD1500, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           PSD2000mean = rollapply(PSD2000, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           PSD2500mean = rollapply(PSD2500, width = 5, FUN = mean, align = "right", fill = NA, by = 1),
+           PSD3000mean = rollapply(PSD3000, width = 5, FUN = mean, align = "right", fill = NA, by = 1)) %>%
+    select(Month, ID, PSD500mean, Volumemean, Energymean, PSD1000mean, PSD1500mean, PSD2000mean, PSD2500mean, PSD3000mean) %>%
+    filter(!is.na(PSD500mean))%>% 
+    ungroup()
+
+# Rolling std
+score_std <- sscore %>%
+    arrange(ID, Month) %>% 
+    group_by(ID) %>%
+    mutate(PSD500std = rollapply(PSD500, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           Volumestd = rollapply(Volume, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           Energystd = rollapply(Energy, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           PSD1000std = rollapply(PSD1000, width = 5, FUN = sd, align = "right", fill = NA, by = 1), 
+           PSD1500std = rollapply(PSD1500, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           PSD2000std = rollapply(PSD2000, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           PSD2500std = rollapply(PSD2500, width = 5, FUN = sd, align = "right", fill = NA, by = 1),
+           PSD3000std = rollapply(PSD3000, width = 5, FUN = sd, align = "right", fill = NA, by = 1)) %>%
+    select(Month, ID, PSD500std, Volumestd, Energystd, PSD1000std, PSD1500std, PSD2000std, PSD2500std, PSD3000std) %>%
+    filter(!is.na(PSD500std))%>% 
+    ungroup()
+
+score_max <- sscore %>%
+    arrange(ID, Month) %>% 
+    group_by(ID) %>%
+    mutate(PSD500max = rollapply(PSD500, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           Volumemax = rollapply(Volume, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           Energymax = rollapply(Energy, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           PSD1000max = rollapply(PSD1000, width = 5, FUN = max, align = "right", fill = NA, by = 1), 
+           PSD1500max = rollapply(PSD1500, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           PSD2000max = rollapply(PSD2000, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           PSD2500max = rollapply(PSD2500, width = 5, FUN = max, align = "right", fill = NA, by = 1),
+           PSD3000max = rollapply(PSD3000, width = 5, FUN = max, align = "right", fill = NA, by = 1)) %>%
+    select(Month, ID, PSD500max, Volumemax, Energymax, PSD1000max, PSD1500max, PSD2000max, PSD2500max, PSD3000max) %>%
+  filter(!is.na(PSD500max)) %>% 
+    ungroup()
+
+score_min <- sscore %>%
+    arrange(ID, Month) %>% 
+    group_by(ID) %>%
+    mutate(PSD500min = rollapply(PSD500, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           Volumemin = rollapply(Volume, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           Energymin = rollapply(Energy, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           PSD1000min = rollapply(PSD1000, width = 5, FUN = min, align = "right", fill = NA, by = 1), 
+           PSD1500min = rollapply(PSD1500, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           PSD2000min = rollapply(PSD2000, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           PSD2500min = rollapply(PSD2500, width = 5, FUN = min, align = "right", fill = NA, by = 1),
+           PSD3000min = rollapply(PSD3000, width = 5, FUN = min, align = "right", fill = NA, by = 1)) %>%
+    select(Month, ID, PSD500min, Volumemin, Energymin, PSD1000min, PSD1500min, PSD2000min, PSD2500min, PSD3000min) %>%
+    filter(!is.na(PSD500min)) %>% 
+    ungroup()
+```
+
+```{r}
+# merge columns of feature sets created earlier
+score_merge <- data.frame(score_mean, score_std[,-c(1:2)], score_max[,-c(1:2)], score_min[,-c(1:2)]) 
+
+df_sscore <- sscore %>%
+                 left_join(score_merge, by = c("Month", "ID")) %>%
+                 filter(!is.na(PSD500std)) %>% 
+                 ungroup()
+```
+
+## Predict and submit on the score dataset 
+
+```{r}
+df_submission <- df_sscore[, c("ID", "Month", "Volume", "Energy", "Volumemean", "Energymean", "PSD1000mean", "PSD2000mean", "PSD500std", "Volumestd", "PSD1500std", "PSD2000std", "PSD2500std", "PSD1500max", "PSD2000max", "PSD2500max", "PSD1500min", "PSD2000min")]
+
+# Filter for only the 4 and 5 months
+#score_filter <- df_submission %>% filter(Month==c(4,5)
+score_filter <- df_submission
+
+# Scale the values
+norm_score=data.frame(apply(score_filter,2,scale))
+
+prediction_submission <- predict(mytree3_optimal,norm_score)
+
+final_submission <- cbind(prediction_submission, score_filter)
+
+```
+
+```{r}
+final_submission<-final_submission[order(final_submission$ID),]
+```
+
+## 1. BUILD PROBABILITIES TABLES FOR EACH PUMP
+```{r}
+##_____________________
+## 1. BUILD PROBABILITIES PREDICTION MODEL
+
+# 
+#Phil_prob <- read.csv("Final Probabilities.csv")
+Phil_prob <- final_submission
+Phil_prob <- Phil_prob[order(Phil_prob$ID),]
+
+ppumps6 <- Phil_prob %>%
+  select(ID, 1, 2, 3, 4, 5)
+colnames(ppumps6) <- c("ID", "P1", "P2", "P3", "P4", "P5")
+
+ppumps6$Ptot <- rowSums(ppumps6)-ppumps6$ID
+ppumps6 <- ppumps6 %>%
+  mutate(
+    P1=P1/Ptot,
+    P2=P2/Ptot,
+    P3=P3/Ptot,
+    P4=P4/Ptot,
+    P5=P5/Ptot
+  ) %>%
+  select(-Ptot)
+
+n_pumps <- nrow(ppumps6)
+Eprobs6.1 <- colSums(ppumps6[,2:6])/n_pumps
+```
+
+We need to consider the risk of not maintaining a pump at 6 months. From the study, we know that the average cost of repairs when there is no maintenance at 6 months is $472, while repairs cost on average 280 when there is maintenance done after 6 month. Given that our model has predicted probabilities for immediate need of repairs, we will calculate a deterioration adjustment to apply on the projected 6 month probabilities to calculate the impact of not maintaining at 6 month. 
+
+## Détériotation dataset
+
+```{r}
+set.seed(123)
+df_eli <- df_100[, c("ID", "typeID", "Month", "typeID", "Volume", "Energy", "Volumemean", "Energymean", "PSD1000mean", "PSD2000mean", "PSD500std", "Volumestd", "PSD1500std", "PSD2000std", "PSD2500std", "PSD1500max", "PSD2000max", "PSD2500max", "PSD1500min", "PSD2000min")]
+# Filter for only the 4 and 5 months
+df_to_predict_eli <- df_eli %>% filter(Month==c(5))
+# Predict on it
+pred_eli <- predict(mytree3_optimal, df_to_predict_eli[,4:20])
+eli_submission <- cbind(pred_eli, df_to_predict_eli)
+df_eli$typeID
+```
+
+```{r}
+rm(aic_1, df, df_100, df_eli, df_sscore, df_submission, df_to_predict_eli, 
+   final_submission, groups, merge_meanstd, mytree3_optimal, norm_combine, 
+   norm_data12, norm_data6, norm_score, prediction_submission, score_filter, 
+   score_max, score_mean, score_merge, score_min, score_std, sensor_max, 
+   sensor_min, sensor_mean, sensor_std, test, train, train_test, tree_3,
+   cp_optimal, mytable)
+```
+
+```{r}
+det_calcs <- eli_submission %>%
+  select(ID, typeID, 1, 2, 3, 4, 5)
+colnames(det_calcs) <- c("ID", "typeID", "P1", "P2", "P3", "P4", "P5")
+
+# repair types for 12 months
+# combine 2, 3 and 4 due to type of repair and l
+det_calcs <- det_calcs %>%
+  mutate(P2_4 = P2 +P3 +P4) %>%
+  select(ID, typeID, P1, P2_4, P5)
+
+det_calcs[det_calcs$typeID==2,]$typeID <- 2.4
+det_calcs[det_calcs$typeID==4,]$typeID <- 2.4
+det_calcs$typeID <- as.factor(det_calcs$typeID)
+
+n_typeID <- table(det_calcs$typeID)
+
+P_6 <- colSums(det_calcs[,3:5])/sum(n_typeID)
+P_12 <- as.vector(n_typeID/sum(n_typeID))
+
+names(P_12) <- c("P1", "P2_P4", "P5")
+det_factor <- P_12/P_6
+names(det_factor) <- c("F1", "F2_4", "F5")
+
+rm(P_6, P_12, n_typeID, det_calcs, eli_submission)
+```
+
+Calculating the two probabilities tables for the 100,000 pumps
+```{r}
+ppumps12 <- ppumps6 %>%
+  mutate(
+    P1=P1*det_factor[1],
+    P2=P2*det_factor[2],
+    P3=P3*det_factor[2],
+    P4=P4*det_factor[2],
+    P5=P5*det_factor[3],
+  )
+
+ppumps12$Ptot <- rowSums(ppumps12)-ppumps12$ID
+ppumps12 <- ppumps12 %>%
+  mutate(
+    P1=P1/Ptot,
+    P2=P2/Ptot,
+    P3=P3/Ptot,
+    P4=P4/Ptot,
+    P5=P5/Ptot
+  ) %>%
+  select(-Ptot)
+
+rm(Phil_prob, det_factor)
+```
+
+
+## 2. REPAIR COSTS ESTIMATE
+```{r}
+## Average cost for 6 months unknown (july to december)
+Ecost6_2<- sum(Eprobs6.1*as.vector(rep_type$FixCost)[-1])
+```
+
+
+Mean repair cost for 6 months, not knowing anything about the pumps is 331. *from the study data we obtain around 280 - there is bias to look at here. 
+
+Let's estimate repair costs at 6 months and 12 months. At 6 months, we use the probabilities as well as the expected repair costs when we know nothing. 
+```{r}
+## Costs if maintenance at 6 months and 12 months
+rpumps6 <- ppumps6 %>%
+  mutate(
+    C1=P1*rep_type[2,3],
+    C2=P2*rep_type[3,3],
+    C3=P3*rep_type[4,3],
+    C4=P4*rep_type[5,3],
+    C5=P5*rep_type[6,3],
+    Ecost1=C1 + C2 + C3 + C4 + C5,
+    Ecost2=rep(Ecost6_2,n_pumps),
+    EcostY= Ecost1+Ecost2
+  )  %>%
+  select(ID, Ecost1, Ecost2, EcostY)
+
+## Costs if maintenance at 12 months only
+rpumps12 <- ppumps12 %>%
+  mutate(
+    C1=P1*rep_type[2,3],
+    C2=P2*rep_type[3,3],
+    C3=P3*rep_type[4,3],
+    C4=P4*rep_type[5,3],
+    C5=P5*rep_type[6,3],
+    EcostY=C1 + C2 + C3 + C4 + C5
+  )  %>%
+  select(ID, EcostY)
+
+
+## clean environment
+remove(Ecost6_2)
+```
+
+
+* Repairs are ALWAYS more expensive when doing two of them. To be expected as probabilities are not that different and average 6 month cost is 330 per pump. 
+
+The impact of deterioration at is 18% on repairs. Based on study 12 months - around 30%. Highly dependent on mix of probabilities. Seems like more breakdown in study than expected in 12 months (in line with probabilities)
+
+Overall repair costs are more expensive when done 12 month later (to consider machine deterioration). But additional cost of 2nd repair is high so overall, 6 month is almost twice as expensive.
+
+Creating a function to calculate repair costs, when simulation comes
+```{r}
+## COST REPAIR FUNCTION
+cost_repair <- function(smaint) {
+  smaint %>%
+    mutate(
+      M6=Maintenance*rpumps6$EcostY,
+      M12=(1-Maintenance)*rpumps12$EcostY,
+      CR=M6+M12
+    )
+}
+```
+
+## 6 MONTH MAINTENANCE COST ESTIMATE
+Creating a function to calculate maintenance costs, when simulation comes
+```{r}
+## 6 MONTH MAINTENANCE COST FUNCTION
+cost_maint <- function(smaint) {
+  n_maint <- sum(smaint$Maintenance)
+  if (n_maint <= 20000){
+    500*n_maint
+  } else {
+    500*20000+5000*(n_maint-20000)
+  }
+}
+
+```
+
+
+## 3. LIQUID REVENUE CALCULATIONS
+
+Data exploration : the liquid revenue is linked to typeID = 1,2,and 3 together, 4 and 5. For the 6 month data, the trend starts after month 2 while for the 12 month data, the trend starts around month 5, so only this data will be used to predict liquid revenues. 
+
+
+```{r}
+sample_liq <- rbind(full_data6[full_data6$Month>2,], full_data12[full_data12$Month>5,])
+```
+
+Using the monte carlo method to estimate the mean and standard deviation of the mean liquid production based on typeID of 1-3, 4 or 5.
+```{r}
+set.seed(1234)
+B=1000
+
+## type1 to 3 volume production
+n=length(sample_liq[sample_liq$typeID!=4&sample_liq$typeID!=5,]$Volume)
+mean.boot1=NULL
+
+for(i in 1:B) {
+  id.boot=sample(1:n,size=n,replace=TRUE)
+  mean.boot1[i]=mean(sample_liq[sample_liq$typeID!=4&sample_liq$typeID!=5,]$Volume[id.boot])
+}
+
+V1mean.boot = mean(mean.boot1)
+#Emean.boot
+V1se.boot=sd(mean.boot1)
+#Ese.boot
+hist(mean.boot1)
+
+## type4 volume production
+n=length(sample_liq[sample_liq$typeID==4,]$Volume)
+mean.boot4=NULL
+
+for(i in 1:B) {
+  id.boot=sample(1:n,size=n,replace=TRUE)
+  mean.boot4[i]=mean(sample_liq[sample_liq$typeID==4,]$Volume[id.boot])
+}
+
+V4mean.boot = mean(mean.boot4)
+#Emean.boot
+V4se.boot=sd(mean.boot4)
+#Ese.boot
+hist(mean.boot4)
+
+## type5 volume production
+n=length(sample_liq[sample_liq$typeID==5,]$Volume)
+mean.boot5=NULL
+
+for(i in 1:B) {
+  id.boot=sample(1:n,size=n,replace=TRUE)
+  mean.boot5[i]=mean(sample_liq[sample_liq$typeID==5,]$Volume[id.boot])
+}
+
+V5mean.boot = mean(mean.boot5)
+#Emean.boot
+V5se.boot=sd(mean.boot5)
+#Ese.boot
+hist(mean.boot5)
+```
+Using this information to predict the mean liquid production by pump, using the central limit theorem. Generating random normal distribution numbers with means and standard deviation from Monte Carlo estimates. 
+```{r}
+set.seed(12121)
+pred_liq <- as.data.frame(cbind(ppumps6[,1], rnorm(n_pumps, mean=V1mean.boot, sd=V1se.boot)))
+colnames(pred_liq) <- c("ID", "Volume1.3")
+summary(pred_liq)
+#hist(pred_liq$Volume1.3)
+
+pred_liq$Volume4 <- rnorm(n_pumps, mean=V4mean.boot, sd=V4se.boot)
+pred_liq$Volume5 <- rnorm(n_pumps, mean=V5mean.boot, sd=V5se.boot)
+
+#hist(pred_liq$Volume4)
+#hist(pred_liq$Volume5)
+```
+
+Calculating the estimated liquid production by pump using the probabilities and liquid by typeID
+```{r}
+sliq6 <- sscore %>%
+  group_by(ID) %>%
+  summarize(months5=sum(Volume)) %>%
+  select(ID, months5) %>%
+  inner_join(pred_liq, by = "ID") %>%
+  inner_join(ppumps6, by = "ID") %>%
+  mutate(P1.3=P1+P2+P3,
+         M6=Volume1.3*P1.3+Volume4*P4+Volume5*P5,
+         Eliq=months5+M6) %>%
+  select(ID, Eliq, months5, M6)
+
+set.seed(1030)
+pred_liq$Volume1.3 <- rnorm(n_pumps, mean=V1mean.boot, sd=V1se.boot)
+pred_liq$Volume4 <- rnorm(n_pumps, mean=V4mean.boot, sd=V4se.boot)
+pred_liq$Volume5 <- rnorm(n_pumps, mean=V5mean.boot, sd=V5se.boot)
+
+sliq6.2 <- pred_liq %>%
+  mutate(m7.12=6*(sum(Eprobs6.1[1:3])*Volume1.3+Eprobs6.1[4]*Volume4+Eprobs6.1[5]*Volume5)) %>%
+  select(ID, m7.12)
+
+sliq6 <- sliq6 %>%
+  inner_join(sliq6.2, by = "ID") %>%
+  mutate(Eliq=Eliq+m7.12) %>%
+  select(ID, Eliq, months5, M6, m7.12)
+
+set.seed(3421)
+pred_liq$Volume1.3 <- rnorm(n_pumps, mean=V1mean.boot, sd=V1se.boot)
+pred_liq$Volume4 <- rnorm(n_pumps, mean=V4mean.boot, sd=V4se.boot)
+pred_liq$Volume5 <- rnorm(n_pumps, mean=V5mean.boot, sd=V5se.boot)
+
+sliq12 <- sscore %>%
+  group_by(ID) %>%
+  summarize(months5=sum(Volume)) %>%
+  inner_join(pred_liq, by = "ID") %>%
+  inner_join(ppumps12, by = "ID") %>%
+  mutate(P1.3=P1+P2+P3,
+         M6.12=7*(Volume1.3*P1.3+Volume4*P4+Volume5*P5),
+         Eliq=months5+M6.12) %>%
+  select(ID, Eliq, months5, M6.12)
+```
+
+Creating a function to calculate liquid revenues, when simulation comes
+```{r}
+## REVENU LIQUID FUNCTION
+rev_liquid <- function(smaint) {
+  smaint %>%
+    mutate(
+      M6=Maintenance*sliq6$Eliq,
+      M12=(1-Maintenance)*sliq12$Eliq,
+      RL=M6+M12
+    )
+}
+```
+
+
+```{r}
+## clean environment
+rm(sample_liq, pred_liq, sliq6.2, mean.boot1, mean.boot4, mean.boot5, V1mean.boot, V4mean.boot, V5mean.boot, V1se.boot, V4se.boot, V5se.boot, n, B, id.boot,i)
+```
+
+## 4. ENERGY COST ESTIMATE
+
+From our preliminary data analysis, the average energy usage for each type of repairs considering whether the pump was maintained after 6 months are not materially different. However, they are very linearly related to the Liquid Volume data.
+
+```{r}
+full_data <- rbind(full_data6, full_data12) %>%
+  select(Volume, Energy)
+
+set.seed(8765)
+id.train <- sample(1:nrow(full_data),round(nrow(full_data)*0.8,0), replace = FALSE)
+id.test <- setdiff(1:nrow(full_data),id.train)
+
+fd_train <- full_data[id.train,]
+fd_test <- full_data[id.test,]
+
+m.ener<-mean(fd_train$Energy)
+m.vol<-mean(fd_train$Volume)
+
+fd_train$Energy<-fd_train$Energy/m.ener
+fd_train$Volume<-fd_train$Volume/m.vol
+fd_test$Energy<-fd_test$Energy/m.ener
+fd_test$Volume<-fd_test$Volume/m.vol
+
+cor(fd_train$Volume, fd_train$Energy)
+```
+Training model with 80% of data
+
+```{r}
+mod_reg <- lm(Energy~Volume, data=fd_train)
+summary(mod_reg)
+```
+Checking MSE on the test data
+
+```{r}
+mean(mod_reg$residuals^2)
+data.predict <- predict.lm(mod_reg,fd_test)
+mean((data.predict-fd_test$Energy)^2)
+```
+Model usable to predict Energy.
+
+Predicting energy usage for the first 6 months when repairs are done at 6 months.
+```{r}
+pred_ener6.1 <- sliq6 %>%
+  mutate(Volume=M6/m.vol,
+         Energy=0) %>%
+  select(-Eliq, -ID, -months5, -M6, -m7.12)
+
+pred_ener6.1$Energy <- as.vector(predict.lm(mod_reg, pred_ener6.1))
+pred_ener6.1$ID <- sliq6$ID
+
+pred_ener6.1 <- pred_ener6.1 %>%
+  mutate(Energy=Energy*m.ener) %>%
+  select(ID, Energy)
+
+summary(pred_ener6.1)
+#hist(pred_ener6$Energy)
+```
+Predicting energy usage for the second 6 months when repairs are done at 6 months.  
+```{r}
+pred_ener6.2 <- sliq6 %>%
+  mutate(Volume=m7.12/m.vol/6,
+         Energy=0) %>%
+  select(-Eliq, -ID, -months5, -M6, -m7.12)
+
+pred_ener6.2$Energy <- as.vector(predict.lm(mod_reg, pred_ener6.2))
+pred_ener6.2$ID <- sliq6$ID
+
+pred_ener6.2 <- pred_ener6.2 %>%
+  mutate(Energy=Energy*m.ener) %>%
+  select(ID, Energy)
+
+summary(pred_ener6.2)
+#hist(pred_ener6$Energy)
+```
+
+Predicting energy usage for the 12 months when repairs are not done at 6 months.  
+```{r}
+pred_ener12 <- sliq12 %>%
+  mutate(Volume=M6.12/m.vol/7,
+         Energy=0) %>%
+  select(-Eliq, -ID, -months5, -M6.12)
+
+pred_ener12$Energy <- as.vector(predict.lm(mod_reg, pred_ener12))
+pred_ener12$ID <- sliq6$ID
+
+pred_ener12 <- pred_ener12 %>%
+  mutate(Energy=Energy*m.ener) %>%
+  select(ID, Energy)
+
+summary(pred_ener12)
+#hist(pred_ener12$Energy)
+```
+
+Combining the predictions to estimate energy usage costs per pump. 
+
+```{r}
+## calculate total energy usage
+sener6 <- sscore %>%
+  group_by(ID) %>%
+  summarise(months5=sum(Energy)) %>%
+  inner_join(pred_ener6.1, by = "ID") %>%
+  mutate(Eene6.1=Energy+months5) %>%
+  select(ID, Eene6.1, months5)
+
+sener6 <- sener6 %>%
+  inner_join(pred_ener6.2, by = "ID") %>%
+  mutate(Eene6.2=Energy*6,
+         Eene=Eene6.1+Eene6.2) %>%
+  select(ID, Eene, Eene6.1, Eene6.2)
+
+
+sener12 <- sscore %>%
+  group_by(ID) %>%
+  summarise(months5=sum(Energy)) %>%
+  inner_join(pred_ener12, by = "ID") %>%
+  mutate(Eene=Energy*7+months5) %>%
+  select(ID, Eene)
+```
+
+Creating a function to calculate energy costs, when simulation comes
+```{r}
+## COST ENERGY FUNCTION
+cost_energy <- function(smaint) {
+  smaint %>%
+    mutate(
+      M6=Maintenance*sener6$Eene,
+      M12=(1-Maintenance)*sener12$Eene,
+      CE=M6+M12
+    )
+}
+```
+
+
+```{r}
+## clean environment
+rm(pred_ener6.1, pred_ener12, pred_ener6.2, m.ener, m.vol, fd_test, fd_train, full_data, mod_reg, data.predict, id.test, id.train, Eprobs6.1)
+```
+
+
+## PROFIT CALCULATIONS
+
+Building a table to compare the costs of each pump if it is maintained at 6 and 12 months and the same pump if it is maintained at 12 months only
+```{r}
+#cost compare
+ccompare<- ppumps6 %>%
+  mutate(Pb6=1-P1) %>% 
+  inner_join(rpumps12, by= "ID") %>%
+  inner_join(sener12, by= "ID") %>%
+  inner_join(sliq12, by= "ID") %>%
+  mutate(Eprofit12 = Eliq*0.03+Eene*0.1+EcostY+500) %>%
+  select(ID, Pb6, Eprofit12) %>%
+  inner_join(rpumps6, by= "ID") %>%
+  inner_join(sener6, by= "ID") %>%
+  inner_join(sliq6, by= "ID") %>%
+  mutate(Eprofit6 = Eliq*0.03+Eene*0.1+EcostY+1000) %>%
+  select(ID, Pb6, Eprofit12, Eprofit6)
+```
+
+
+We will look at two ways for choosing which pumps to maintain after 6 months. 
+1. Probability of needing repairs at 6 months - Due to the simplified method of probabilities calculations, there is a clear separation in the probabilities of needing repairs. 
+```{r}
+hist(ccompare$Pb6, main = "Histogram of probability of needing repairs", 
+     xlab = "Probability of needing repairs at 6 months")
+```
+2. Comparing the expect annual profits if maintained at 6 months to the annual expected profits if it isn't.
+
+#### Approach 1 - based on prob of breaking down
+
+Let's calculate the number of pumps maintained for various probabilistic cutoffs.
+
+DECISION CRITERIA : We maintain if the probability of needing repairs at 6 months is more than the cut-off.
+```{r}
+### creating binary maintenance vector (1= yes to 6 month maintenance)
+
+## APPROACH 1 - based on probs
+simul_prob <- ccompare[,1:2]
+
+cutoffs_prob <- c(0, 0.25, 0.3, 0.32, 0.4, 1)
+
+for (i in 1:length(cutoffs_prob)) {
+  new <- as.numeric(simul_prob$Pb6>cutoffs_prob[i])
+  simul_prob[, ncol(simul_prob)+1] <- new
+  colnames(simul_prob)[ncol(simul_prob)] <- paste("SP",i)
+}
+
+simul_prob <- simul_prob[,-2]
+```
+
+Calculate costs for each of the simulated pump maintenance scenarios
+```{r}
+## Probabilities simulation code
+n_simul <- length(simul_prob)-1
+
+profit_prob <- as.data.frame(matrix(0,n_simul,3))
+colnames(profit_prob) <- c("n_maintenance", "PROFIT", "cutoff")
+
+for (i in 1:n_simul) {
+  df <- as.data.frame(cbind(simul_prob[,1],simul_prob[,i+1]))
+  colnames(df) <- c("ID", "Maintenance")
+  
+  profit_prob[i,1] <- sum(df$Maintenance)
+  
+  C_RM <- sum(cost_repair(df)$CR) + cost_maint(df) + n_pumps*500
+  C_E <- sum(cost_energy(df)$CE)*0.1
+  R_L <- sum(rev_liquid(df)$RL)*0.03
+  
+  profit_prob[i,2] <- round((R_L - C_RM - C_E)/1000000,2)
+  profit_prob[i,3] <- cutoffs_prob[i]
+}
+  
+profit_prob <- profit_prob[order(profit_prob$n_maintenance),]
+```
+
+#### Approach 2 - based on estimated profit per pump
+By calculating the difference in profits if the pump is maintained at 6 months, we will choose to maintain the number of pumps that maximize the profits
+
+DECISION CRITERIA : We maintain if difference in expected profits between maintaining at month 6 versus not maintaining is more than the cutoff.   
+```{r}
+## APPROACH 2 - based on Estimated Profit per pump
+simul_ppp <- ccompare %>%
+  mutate(cost_no_maint=Eprofit6-Eprofit12) 
+
+cutoffs_ppp <- c(-10000, -5000, 0, 1000, 2500, 5000, 10000, 30000, 40000, 50000)
+
+for (i in 1:length(cutoffs_ppp)) {
+  new <- as.numeric(simul_ppp$cost_no_maint>cutoffs_ppp[i])
+  simul_ppp[, ncol(simul_ppp)+1] <- new
+  colnames(simul_ppp)[ncol(simul_ppp)] <- paste("SPP",i)
+}
+
+simul_ppp <- simul_ppp[,c(-2,-3,-4,-5)]
+
+rm(new)
+```
+
+Calculate costs for each of the simulated pump maintenance scenarios  
+```{r}
+## Profit per pump simulation code
+n_simul <- length(simul_ppp)-1
+
+profit_ppp <- as.data.frame(matrix(0,n_simul,3))
+colnames(profit_ppp) <- c("n_maintenance", "PROFIT", "cutoff")
+
+for (i in 1:n_simul) {
+  df <- as.data.frame(cbind(simul_ppp[,1],simul_ppp[,i+1]))
+  colnames(df) <- c("ID", "Maintenance")
+  
+  profit_ppp[i,1] <- sum(df$Maintenance)
+  
+  C_RM <- sum(cost_repair(df)$CR) + cost_maint(df) + n_pumps*500
+  C_E <- sum(cost_energy(df)$CE)*0.1
+  R_L <- sum(rev_liquid(df)$RL)*0.03
+  
+  profit_ppp[i,2] <- round((R_L - C_RM - C_E)/1000000,2)
+  profit_ppp[i,3] <- cutoffs_ppp[i]
+}
+
+profit_ppp <- profit_ppp[order(profit_ppp$n_maintenance),]
+```
+
+#### Comparison of decision criteria
+To choose the optimal number of pumps to maintain, lets compare the two different cutoff approaches. 
+```{r}
+# create a table with the summary of profits
+profit <- rbind(cbind(profit_prob,simul=rep("Probabilities",nrow(profit_prob))),
+                cbind(profit_ppp,simul=rep("E[Profits]",nrow(profit_ppp))))
+
+rm(df, profit_ppp, profit_prob, C_E, C_RM, cutoffs_ppp, cutoffs_prob,i,R_L)
+```
+
+
+```{r}
+profit_graph <- ggplot(profit, aes(x=n_maintenance, y=PROFIT, colour = simul))+
+  geom_point(size=2)+
+  geom_line(size=0.75) +
+  ggtitle("Expected Annual Profits based on Number of Pumps Maintained") +
+  xlab("Number of Pumps Maintained") +
+  ylab("Expected Annual Profits (M$)") 
+  
+profit_graph + labs(colour="Decision Criteria")
+```
+
+Both approach give the same overall trend in the number of pumps to be maintained. 
+```{r}
+profit <- profit %>%
+  mutate(PROFIT=round(PROFIT,0))%>%
+  select(simul, cutoff, PROFIT, n_maintenance)
+colnames(profit) <- c("Decision Criteria Approach", "Cut-off", "Expected Profit (M$)", "Nb of pumps maintained")
+profit
+```
+```{r}
+#write.csv(profit, file="Profit table.csv")
+```
+
+Profits are maximized at approximately $340M when between 2000 and 6000 pumps are maintained at 6 months. Because of the lack of precision from the establishing the 6 month repair type probabilities, it is difficult to obtain more precision from that method. The approach where we use the expected cost tends to give us a better idea of the shape of the profit curve.  
+
+```{r}
+profit[which(profit$'Expected Profit (M$)'==max(profit$'Expected Profit (M$)')),]
+```
+
+Since two cutoff seem to give us the same maximum expected profit, we will choose the method which requires us to maintain the higher number of pumps. Overall trend has shown that profits are higher when pumps are maintained every 6 months. At the same overall expected profit, it is better to err on the side of caution and maintain more pumps than too little. 
+
+Let's make sure the simulation worked fine. 
+```{r}
+##_____________________
+## 7. CHECK MAX RESULTS
+
+smaint <- simul_ppp %>%
+  select(ID, `SPP 6`) %>%
+  "colnames<-"(c("ID", "Maintenance"))
+
+# Repairs about $10M to $30M + maintenance + ye maintenance for all of $50M
+C_RM <- sum(cost_repair(smaint)$CR) + cost_maint(smaint) + n_pumps*500
+
+# Energy costs - $6B en ligne avec 5 mois de sscore ou 12 mois *500 de sstudy
+C_E <- sum(cost_energy(smaint)$CE)*0.1
+
+# Revenues from liquid - 6.5B avec 5 mois de sscore
+R_L <- sum(rev_liquid(smaint)$RL)*0.03
+
+PROFIT <- round((R_L - C_RM - C_E)/1000000,2)
+```
+At 6341 pumps maintained, we obtain expected annual profits of $340M.  
+
+
+##### Creating maintenance vector
+To share maintenance results
+```{r}
+#colnames(smaint) <- c("ID", "MAINTENANCE")
+#write.csv(smaint, file = "Results_maintenance.csv")
+```
+
+```{r}
+##_____________________________________________________________________________
+
+# Clear environment
+rm(list = ls())
+
+# Clear packages
+p_unload(all) 
+
+# Clear console
+cat("\014")  # ctrl+L
+```
+
+
