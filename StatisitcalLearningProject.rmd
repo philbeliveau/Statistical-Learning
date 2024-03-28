@@ -1,0 +1,1211 @@
+---
+title: "Question 1 & Question 2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+
+##### 1.a. Perform an exploratory data analysis (EDA) to extract different data characteristics. Perform necessary manipulations (e.g., treatment of outliers). Use 95th percentile for outlier capping, if needed. Comment.
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+```
+
+First, in order to make the problem/dataset more interesting, we categorize the alcohol variable (which is initially numerical) into three levels: low, medium, and high. The separation rule is as follows:
+
+-   Low (`levels.alcohol` == 1) when alcohol is below $10.5 \%$.
+
+-   Medium (`levels.alcohol` == 2) when alcohol is below $12 \%$.
+
+-   High (`levels.alcohol` == 3) when alcohol is above $12 \%$.
+
+```{r}
+wineDataset <- read.csv("winequality-red.csv")
+
+alcohol_levels <- wineDataset %>% select(alcohol) %>% mutate("Low_alcohol" = alcohol<=10.5, "normal_alcohol" = alcohol>10.5 & alcohol<=12, 
+                                                      "high_alcohol"= alcohol>12)
+
+alcohol_levels$Low_alcohol <- as.integer(as.logical(alcohol_levels$Low_alcohol))
+alcohol_levels$normal_alcohol <- as.integer(as.logical(alcohol_levels$normal_alcohol))
+alcohol_levels$high_alcohol <- as.integer(as.logical(alcohol_levels$high_alcohol))
+alcohol_levels <- alcohol_levels[, -1]
+
+wineDataset <- cbind(wineDataset, alcohol_levels)
+
+wine_t <- wineDataset %>% mutate(levels.alcohol=
+                            case_when(Low_alcohol==1~1, normal_alcohol==1~2, high_alcohol==1~3))
+
+wineDataset <- wine_t[, c(1:10, 12, 16)]
+```
+
+We'll start off by exploring the data...
+
+```{r}
+wineDataset <- wineDataset[complete.cases(wineDataset), ]
+
+str(wineDataset)
+
+head(wineDataset)
+
+colSums(is.na(wineDataset))
+```
+
+**Comment:** There are several observations:
+
+-   The dataset contains 1599 observations.
+
+-   The dataset has 11 explanatory variables and doesn't have any NA values.
+
+-   All variables are continuous variables, except the level of alcohol, which we will treat as a categorical variable with three distinct categories.
+
+##### 1.a.i Descriptive Statistics
+
+Some descriptive statistics:
+
+```{r}
+summary<-sapply(wineDataset,function(x) c(mean(x),sd(x),min(x),max(x),length(x)))
+row.names(summary)<-c("mean","sd","min","max","n")
+summary
+```
+
+**Comment:** We notice that variables have different scales. Certain variables such as `free.sulfur.dioxide` and `total.sulfur.dioxide` have a large standard deviation, whereas others like `density` have very small standard deviation.
+
+We are looking for features that hold significant amount of information about our response variable. Thus, we are especially looking for features with high standard deviation. free.sulfur.dioxide and total.sulfur.dioxide seems to be good candidates for helping us explain the quality of the wine.
+
+##### 1.a.ii Distribution of the variables:
+
+##### Histogram of the explanatory variables:
+
+```{r}
+# Histograms
+par(mfrow=c(2,2))
+hist(wineDataset$fixed.acidity,xlab="fixed acidity",main="Histogram")
+hist(wineDataset$volatile.acidity,xlab="volatile acidity",main="Histogram")
+hist(wineDataset$citric.acid,xlab="citric acid",main="Histogram")
+hist(wineDataset$residual.sugar,xlab="residual sugar",main="Histogram")
+```
+
+```{r}
+par(mfrow=c(2,2))
+hist(wineDataset$chlorides,xlab="chlorides",main="Histogram")
+hist(wineDataset$free.sulfur.dioxide,xlab="free.sulfur.dioxide",main="Histogram")
+hist(wineDataset$total.sulfur.dioxide,xlab="total.sulfur.dioxide",main="Histogram")
+hist(wineDataset$density,xlab="density",main="Histogram")
+```
+
+```{r}
+par(mfrow=c(2,2))
+hist(wineDataset$pH,xlab="pH",main="Histogram")
+hist(wineDataset$sulphates,xlab="sulphates",main="Histogram")
+hist(wineDataset$levels.alcohol,xlab="alcohol",main="Histogram")
+```
+
+##### Histogram of the response variable (*quality*):
+
+```{r}
+hist(wineDataset$quality,xlab="quality",main="Histogram")
+```
+
+**Comment:** Some observations include:
+
+-   We see that the majority of our explanatory variables are slightly skewed to the right. We could then consider using a different correlation coefficient that doesn't require normality between the explanatory variable to assess the correlation between them.
+
+-   We also see that our response variable is relatively normally distributed. It is expected; low and high quality wines are less observed, while average quality wines are the most frequent. There are more than 68.9% of the observations that are within one standard deviation, thus the distribution is not perfectly normally distributed.
+
+-   Another interesting observation includes the imbalance of the levels of alcohol. We see that most wines have a low level of alcohol. It could be interesting to look into more details at the characteristic that compose higher level of alcohol.
+
+##### 1.a.iii Scatterplots
+
+We can also examine the relationship between the response variable and the explanatory variables using scatterplots.
+
+##### Fixed acidity and volatile acidity vs. quality scatter plots
+
+```{r}
+par(mfrow=c(1,2))
+# quality, fixed.acidity
+plot(quality~fixed.acidity,xlab="fixed acidity",ylab="quality",data=wineDataset,lwd=1.5)
+abline(lm(quality~fixed.acidity,data=wineDataset),lwd=1.5)
+
+# quality, volatile.acidity
+plot(quality~volatile.acidity,xlab="volatile acidity",ylab="quality",data=wineDataset,lwd=1.5)
+abline(lm(quality~volatile.acidity,data=wineDataset),lwd=1.5)
+```
+
+##### citric acid and pH vs. quality scatter plots
+
+```{r}
+par(mfrow=c(1,2))
+# quality, citric.acid
+plot(quality~citric.acid,xlab="citric acid",ylab="quality",data=wineDataset,lwd=1.5)
+abline(lm(quality~citric.acid,data=wineDataset),lwd=1.5)
+
+# quality, pH
+plot(quality~pH,xlab="pH",ylab="quality",data=wineDataset,lwd=1.5)
+abline(lm(quality~pH,data=wineDataset),lwd=1.5)
+```
+
+##### residual sugar and chlorides vs. quality scatter plots
+
+```{r}
+par(mfrow=c(1,2))
+# quality, residual.sugar
+plot(quality~residual.sugar,xlab="residual sugar",ylab="quality",data=wineDataset,lwd=1.5)
+abline(lm(quality~residual.sugar,data=wineDataset),lwd=1.5)
+
+# quality, chlorides
+plot(quality~chlorides,xlab="chlorides",ylab="quality",data=wineDataset,lwd=1.5)
+abline(lm(quality~chlorides,data=wineDataset),lwd=1.5)
+```
+
+##### free.sulfur.dioxide and total.sulfur.dioxide vs. quality scatter plots
+
+```{r}
+par(mfrow=c(1,2))
+# quality, free.sulfur.dioxide
+plot(quality~free.sulfur.dioxide,xlab="free sulfur dioxide",ylab="quality",data=wineDataset,lwd=1.5)
+abline(lm(quality~free.sulfur.dioxide,data=wineDataset),lwd=1.5)
+
+# quality, total.sulfur.dioxide
+plot(quality~total.sulfur.dioxide,xlab="total sulfur dioxide",ylab="quality",data=wineDataset,lwd=1.5)
+abline(lm(quality~total.sulfur.dioxide,data=wineDataset),lwd=1.5)
+```
+
+##### density and alcohol vs. quality scatter plots
+
+```{r}
+par(mfrow=c(1,2))
+# quality, density
+plot(quality~density,xlab="density",ylab="quality",data=wineDataset,lwd=1.5)
+abline(lm(quality~density,data=wineDataset),lwd=1.5)
+```
+
+##### sulphates vs. quality scatter plot
+
+```{r}
+par(mfrow=c(1,2))
+# quality, sulphates
+plot(quality~sulphates,xlab="sulphates",ylab="quality",data=wineDataset,lwd=1.5)
+abline(lm(quality~sulphates,data=wineDataset),lwd=1.5)
+```
+
+**Comment:** Highlights from this inspection include:
+
+-   There seems to have a strong negative correlation between the volatile acidity and the quality of the wine. Meaning that low quality wine have significantly higher volatile acidity level than good quality wine.
+
+-   We also see that having higher levels of chloride seems to be associated with lower quality of wine.
+
+-   The graph of quality and density seems interesting, as the value of density seems to be able to distinguish between low quality wine (3,5) to decent and very good wine (6,8). This make us believe that the level of density might be a good candidate to distinguish the wine quality.
+
+**Conclusion:** These graphs only tell a limited story, as they examine the relationship between quality and one explanatory variable at a time.By looking at these graphs, it is not possible to deduct how these variables effect quality of wine together.
+
+##### 1.a.iv. Treatment of outliers
+
+From the EDA, we observe that some variables might have outliers (e.g., total sulfur dioxide). It is therefore critical to treat them before modeling. We will use the common method of capping the lowest and the highest $5\%$ of the observations for all the numerical variables.
+
+```{r}
+library(dlookr)
+
+wineDataset$fixed.acidity <- imputate_outlier(wineDataset, fixed.acidity, method = "capping")
+wineDataset$volatile.acidity <- imputate_outlier(wineDataset, volatile.acidity, method = "capping")
+wineDataset$citric.acid <- imputate_outlier(wineDataset, citric.acid, method = "capping")
+wineDataset$pH <- imputate_outlier(wineDataset, pH, method = "capping")
+
+wineDataset$residual.sugar <- imputate_outlier(wineDataset, residual.sugar, method = "capping")
+wineDataset$chlorides <- imputate_outlier(wineDataset, chlorides, method = "capping")
+wineDataset$free.sulfur.dioxide <- imputate_outlier(wineDataset, free.sulfur.dioxide, method = "capping")
+wineDataset$total.sulfur.dioxide <- imputate_outlier(wineDataset, total.sulfur.dioxide, method = "capping")
+
+wineDataset$density <- imputate_outlier(wineDataset, density, method = "capping")
+wineDataset$sulphates <- imputate_outlier(wineDataset, sulphates, method = "capping")
+```
+
+**Comment:** Note that the default capping value of the `imputate_outlier` function is 95%, therefore we don't need to specify the capping value here.
+
+##### 1.b. Inspect the correlation between the variables. Is there any collinearity between the features in the dataset? If yes, provide a possible solution.
+
+```{r}
+library("corrplot")
+
+correlations <- cor(wineDataset)
+
+corrplot(correlations, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+
+corrplot(correlations, type = "upper",  order = "hclust", 
+         tl.col = "black", tl.srt = 45, method="number", number.cex=0.60)
+
+```
+
+**Comment:** From the graph, we see that the pH level and the fixed acidity are strongly negatively correlated, while the fixed acidity and density are strongly positively correlated, with correlation coefficients of -0.68 and 0.67, respectively. Moreover, free sulfur dioxide and total sulfur dioxide have a correlation coefficient of 0.67, meaning they have a strong positive correlation.
+
+```{r}
+library(car)
+mod.col1<-lm(quality~fixed.acidity+volatile.acidity+citric.acid+residual.sugar+chlorides+free.sulfur.dioxide+total.sulfur.dioxide+density+pH+sulphates+as.factor(levels.alcohol),data=wineDataset)
+summary(mod.col1)
+
+vif(mod.col1)
+```
+
+**Comment:** From the VIF table, we observe that fixed acidity has the highest VIF of 6.10, followed by density with a VIF of 4.97. We will therefore proceed with a model "without" the fixed acidity variable and see if the VIF values decrease.
+
+```{r}
+mod.col2<-lm(quality~volatile.acidity+citric.acid+residual.sugar+chlorides+free.sulfur.dioxide+total.sulfur.dioxide+density+pH+sulphates+as.factor(levels.alcohol),data=wineDataset)
+summary(mod.col2)
+
+vif(mod.col2)
+```
+
+**Comment:** We see that when the fixed acidity variable is excluded from the model, all the VIF values are below a reasonable threshold of 3. Based on the VIF values, we remove fixed acidity.
+
+##### 1.c. Inspect the interaction between alcohol level and density on the quality of the wine. Does there seem to be an interaction between the two variables? Comment.
+
+```{r, echo=FALSE}
+library(ggplot2)
+# alternative
+sp <- ggplot(data = wineDataset,
+       aes(x = density   , y = quality, col = as.factor(levels.alcohol))) +
+  geom_point() +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              formula = "y ~ x",
+              show.legend = FALSE,
+              fullrange = TRUE)
+sp
+```
+
+**Comment:** We see that the slopes for different levels of alcohol are not the same, which could be a sign of interaction between alcohol and density. More specifically, line 1 and line 3 are not parallel, i.e., the effect of the level of alcohol on quality changes as a function of density. We see that the higher the value of density, the smaller the difference in quality of wine between low and high levels of alcohol. Although this interaction looks weak.
+
+```{r, echo=FALSE, results='hide', message=FALSE, include=FALSE}
+# Create a boxplot
+# boxplot(wineDataset$density, xlab="Density")$out
+```
+
+```{r, echo=FALSE, results='hide', message=FALSE, include=FALSE}
+# Save the outliers in the vector
+# outliers <- boxplot(wineDataset$density, plot=FALSE)$out
+# 
+# # Saving wine in x so to not destroy the dataset
+# x<-wineDataset
+# # Take out the rows that has the outliers
+# x<- x[-which(x$density %in% outliers),]
+# 
+# boxplot(x$density, xlab="Density")$out
+```
+
+```{r, echo=FALSE}
+# alternative
+# pp <- ggplot(data = x,
+#        aes(x = density, y = quality, col = as.factor(levels.alcohol))) +
+#   geom_point() +
+#   geom_smooth(method = "lm",
+#               se = FALSE,
+#               formula = "y ~ x",
+#               show.legend = FALSE,
+#               fullrange = TRUE)
+# # x axis limits
+# pp +xlim(0.985, 1.02)
+```
+
+##### 1.d. Model the quality of wine in terms of all of the explanatory variables including an interaction between alcohol and density. Provide the model summary results.
+
+The linear regression is of the form:
+
+$$
+\begin{align}
+Y = &\beta_{0} + \beta_{1}volatile.acidity + \beta_{2}citric.acid + \beta_{3}residual.sugar + \beta_{4}chlorides + \beta_{5}free.sulfur.dioxide + \\ 
+&\beta_{6}total.sulfur.dioxide + \beta_{7}density + \beta_{8}pH + \beta_{9}sulphates + \beta_{10}medium.alcohol +  \beta_{11}high.alcohol +  \\ 
+& \beta_{12}(medium.alcohol*density) + \beta_{13}(high.alcohol*density) + \epsilon
+\end{align}
+$$
+
+```{r}
+mod<-lm(quality~volatile.acidity+citric.acid+residual.sugar+chlorides+free.sulfur.dioxide+total.sulfur.dioxide+density+pH+sulphates+as.factor(levels.alcohol)+as.factor(levels.alcohol)*density,data=wineDataset)
+summary(mod)
+```
+
+##### 1.e. Based on the model in part (d), write an expression for the fitted model for each category of alcohol. Comment on the value of R2.
+
+The fitted model has the form:
+
+$$
+\begin{align}
+\hat{quality} = &(2.116e+01) - (1.001e+00)volatile.acidity -(1.208e-01)citric.acid + \\
+& (1.958e-02)residual.sugar - (3.766e+00)chlorides + (5.110e-03)free.sulfur.dioxide - \\ 
+&(4.113e-03)total.sulfur.dioxide -(1.385e+01)density -(5.759e-01)pH + \\ 
+& (1.435e+00)sulphates + (4.967e+00)medium.alcohol + (5.978e+00)high.alcohol - \\
+&(4.604e+00)medium.alcohol*density - (5.183e+00)high.alcohol*density
+\end{align}
+$$
+
+We can split up the model based on the level of alcohol:
+
+**When the level of alcohol is** $low$:
+
+$$
+\begin{align}
+&\hat{E}(quality|alcohol=low) = (2.116e+01) - (1.001e+00)volatile.acidity - \\
+&(1.208e-01)citric.acid + (1.958e-02)residual.sugar - (3.766e+00)chlorides + \\ 
+& (5.110e-03)free.sulfur.dioxide -(4.113e-03)total.sulfur.dioxide -(1.385e+01)density - \\
+& (5.759e-01)pH + (1.435e+00)sulphates
+\end{align}
+$$
+
+**When the level of alcohol is** $medium$:
+
+$$
+\begin{align}
+&\hat{E}(quality|alcohol=medium) =  (2.116e+01 + 4.967e+00) - (1.001e+00)volatile.acidity - \\
+&(1.208e-01)citric.acid + (1.958e-02)residual.sugar - (3.766e+00)chlorides + \\ 
+& (5.110e-03)free.sulfur.dioxide -(4.113e-03)total.sulfur.dioxide - \\ 
+& (1.385e+01+4.604e+00) density  -(5.759e-01)pH + (1.435e+00)sulphates \\ \\
+& = 2.613e+01 - (1.001e+00)volatile.acidity -(1.208e-01)citric.acid + \\ 
+& (1.958e-02)residual.sugar - (3.766e+00)chlorides (5.110e-03)free.sulfur.dioxide - \\ 
+&(4.113e-03)total.sulfur.dioxide - 18.454 density  -(5.759e-01)pH + (1.435e+00)sulphates
+\end{align}
+$$
+
+**When the level of alcohol is** $high$:
+
+$$
+\begin{align}
+&\hat{E}(quality|alcohol=high) = (2.116e+01 + 5.978e+00) - (1.001e+00)volatile.acidity - \\
+&(1.208e-01)citric.acid + (1.958e-02)residual.sugar - (3.766e+00)chlorides + \\ 
+& (5.110e-03)free.sulfur.dioxide -(4.113e-03)total.sulfur.dioxide - \\ 
+& (1.385e+01+ 5.183e+00)density -(5.759e-01)pH + (1.435e+00)sulphates \\ \\
+& = 2.714e+01 - (1.001e+00)volatile.acidity -(1.208e-01)citric.acid + \\
+& (1.958e-02)residual.sugar - (3.766e+00)chlorides + (5.110e-03)free.sulfur.dioxide - \\ 
+& (4.113e-03)total.sulfur.dioxide - 19.033density -(5.759e-01)pH + (1.435e+00)sulphates 
+\end{align}
+$$
+
+$R^2$ is 0.3534, meaning that all the explanatory variables in the model and the interaction variables can explain 36.15% of the variability in the response variable (quality).
+
+Adjusted $R^2$ = 0.3481.
+
+##### 1.f. Based on the model in part (d), interpret the regression coefficient associated with residual sugar, and the main effect of density.
+
+**Interpreting the regression coefficient associated with residual sugar (**$\beta_3$):
+
+$$
+\begin{align}
+&\beta_3 = E(quality|residual sugar = x + 1) -  \\
+&E(quality|residual sugar = x)
+\end{align}
+$$
+
+On average, one unit increase in residual sugar parameter causes quality of wine to increase by 1.958e-02, holding all other variables constant.
+
+**Interpreting the regression coefficient associated with the main effect of density.(**$\beta_7$):
+
+$$
+\begin{align}
+&\beta_7 = E(quality|density = x + 1, alcohol=low) -  \\
+&E(quality|density = x,new,alcohol=low)
+\end{align}
+$$
+
+On average , one unit increase in density causes quality of wine with low alcohol to change by -(1.385e+01) holding all other variables constant. In other words, on average, one unit increase in density causes quality of wine to decrease by 1.385e+01, when alcohol = low, holding all other variables constant.
+
+##### 1.g. Based on the model in part (d), does the effect of density on the quality depend on the level of alcohol? (categorized as low/medium/high)? Justify your answer.
+
+Here we are interested in testing the hypotheses:
+
+$H_0: \beta_{12} = \beta_{13} =0$ vs. $H_1:$ at least one of them $\neq 0$
+
+To test the hypothesis, we proceed to build a new model called mod2, which doesn't contain the interaction variables $medium.alcohol*density$ and $high.alcohol*density$.
+
+```{r}
+mod2 <- lm(quality~volatile.acidity+citric.acid+residual.sugar+chlorides+free.sulfur.dioxide+total.sulfur.dioxide+density+pH+sulphates+as.factor(levels.alcohol),data=wineDataset)
+```
+
+We then compare mod and mod2 using anova function.
+
+```{r}
+anova(mod, mod2)
+```
+
+This leads to a test statistic value (F-test) of 0.0238 and a p-value of 0.97. For the reasonable significance level of $\alpha=0.05$, we fail to reject $H_0$ and conclude that the interaction between alcohol and density is not significant, that is, the effect of density on the quality of wine **does not** depend on the level of alcohol, and vice-versa, keeping all other variables fixed.
+
+##### 1.h. Test whether the alcohol variable is globally significant in the model, using an F-test. Justify your answer. Use 𝛼 = 1%.
+
+Here we are interested in testing the hypotheses:
+
+$H_0: \beta_{10} = \beta_{11} = \beta_{12} = \beta_{13} =0$ vs. $H_1:$ at least one of them $\neq 0$
+
+To test this hypothesis, we build a new model mod3, which excludes the variables $medium.alcohol$, $high.alcohol$, $medium.alcohol*density$, and $high.alcohol*density$.
+
+```{r}
+mod3 <- lm(quality~volatile.acidity+citric.acid+residual.sugar+chlorides+free.sulfur.dioxide+total.sulfur.dioxide+density+pH+sulphates,data=wineDataset)
+```
+
+We then compare mod and mod3 using anova function.
+
+```{r}
+anova(mod, mod3)
+```
+
+This leads to a test statistic value (F-test) of 31.886 and a p-value of 2.2e-16. For the significance level of $\alpha=0.01$, we reject $H_0$ and conclude that the variable alcohol is globally significant.
+
+##### 1.i Based on the model in part (d), is there a significant difference in the effect of density on the quality of wine with a high level of alcohol in comparison to wine with medium level of alcohol? Justify your answer.
+
+In order to compare the high level of alcohol with medium level of alcohol, we need to relevel the $alcohol$ variable and build the model again with the re-leveled version of $alcohol$.
+
+```{r}
+wineDataset$levels.alcohol <-relevel(as.factor(wineDataset$levels.alcohol),2)
+
+levels(as.factor(wineDataset$levels.alcohol))
+```
+
+Now that $medium.alcohol$ is the reference level, we can construct the model again.
+
+```{r}
+mod4<-lm(quality~volatile.acidity+citric.acid+residual.sugar+chlorides+free.sulfur.dioxide+total.sulfur.dioxide+density+pH+sulphates+as.factor(levels.alcohol)+as.factor(levels.alcohol)*density,data=wineDataset)
+summary(mod4)
+```
+
+We are interested in testing the hypothesis:
+
+$H_0: \beta_{13} =0$ vs. $H_1: \beta_{13} \neq 0$.
+
+This leads to a test statistic value (t-value) of -0.016 and a p-value of 0.987143. For the reasonable significance level of $\alpha=0.05$, we fail to reject $H_0$ and conclude that the there **is not** a significant difference in the effect of density on the quality of wine with a high level of alcohol in comparison to wine with medium level of alcohol.
+
+##### 1.j. Carry out a residual analysis. Comment on the results.
+
+In order to asses if the model is well specified and that the t-tests are valid, we make sure that the assumption of normality is met. To do that, we will looking at the residuals.
+
+```{r, echo=FALSE}
+resid<-rstudent(mod)
+fitted<-mod$fitted.values
+res.dat<-cbind(wineDataset,fitted,resid)
+head(res.dat)
+```
+
+```{r, echo=FALSE}
+# histogram
+ggplot(data = res.dat, mapping = aes(x = resid)) +
+  geom_density() +
+ geom_histogram(aes(y = ..density..), bins = 10, alpha = 0.5) +
+  xlab("residuals")+ 
+  ylab("Quality")
+```
+
+**Comment:** Here it seems that the residuals are normally distributed due to the bell shape curve of the graph. However, we see that the residuals do not have exactly a mean of 0, which could lead us to think that the residuals are not fully normal. Let's investigate this comment more in details with other residuals graph.
+
+```{r, echo=FALSE}
+# qqplot
+ggplot(data = res.dat, mapping = aes(sample = resid)) +
+  stat_qq(distribution = qt, dparams = mod$df.residua) +
+  stat_qq_line(distribution = qt, dparams = mod$df.residual) +
+  labs(x = "theoretical quantiles",
+       y = "empirical quantiles") +
+  ggtitle("QQ-Plot Studentized Residuals")
+```
+
+**Comment:** The residuals fall on average on the line, although we can clearly see a deviation of the residuals in the quantile range (0, -2). As most of the observation are not contained in that range, we can assume that the residuals follow the assumption of normality.
+
+```{r, echo=FALSE}
+# resid vs. volatile acidity + smooth 
+ggplot(data = res.dat,
+       aes(x = volatile.acidity, y = resid)) +
+  geom_point() +
+  geom_smooth() +
+  theme(legend.position = "bottom") +
+  ylab("residuals") +
+  xlab("volatile acidity")
+```
+
+**Comment:** When looking at the fitted residuals of volatile acidity on the response variable, we see that the assumptions of normality is being respected. The residuals do not show any form of heteroscedasticity (tunnel shape). The residuals seems to stay around their mean.
+
+```{r, echo=FALSE}
+# resid vs. citric.acid + smooth 
+ggplot(data = res.dat,
+       aes(x = citric.acid, y = resid)) +
+  geom_point() +
+  geom_smooth() +
+  theme(legend.position = "bottom") +
+  ylab("residuals") +
+  xlab("citric acid")
+```
+
+**Comment:** Here I can say the same thing as the previous graph, the residuals look pretty normal and constant variance around the mean.
+
+```{r, echo=FALSE}
+# resid vs. residual sugar + smooth 
+ggplot(data = res.dat,
+       aes(x = residual.sugar, y = resid)) +
+  geom_point() +
+  geom_smooth() +
+  theme(legend.position = "bottom") +
+  ylab("residuals") +
+  xlab("residual sugar")
+```
+
+**Comment:** In terms of residual sugar, I assume that the assumption of normality is still being respected. Most of the residuals are in the same range of value, even though we see extreme value of residuals, they count for very few observations.
+
+```{r, echo=FALSE}
+# resid vs. levels.alcohol
+ggplot(res.dat, aes(x=as.factor(levels.alcohol), y=resid)) +
+  geom_boxplot() +
+  labs(title="Residuals",x="levels.alcohol", y = "residuals")
+```
+
+**Comment:** The boxplots seem okay and suggest no significant abnormalities, we could argue that the residuals for group = 1 are not completely following the assumptions of normality, but we believe that it is not significant enough to violate the assumptions of normality across the group (because the mean residuals value is still very close to zero). In short, there are no huge differences in the mean and variances across all the levels, even though the residuals of levels of alcohol for group = 1 doesn't have a mean residuals of 0.
+
+```{r, echo=FALSE}
+# resid vs. fitted + smooth 
+ggplot(data = res.dat,
+       aes(x = fitted, y = resid)) +
+  geom_point() +
+  geom_smooth() +
+  theme(legend.position = "bottom") +
+  ylab("residuals") +
+  xlab("fitted values")
+```
+
+**Comment:** Finally, The residual graph concerning the fitted values is very well fitted and looks linear.
+
+**Conclusion:** In our residual analysis, we plotted a histogram of residuals, a qqplot, residuals vs. covariates, and residuals vs. fitted values graphs. Overall, the histogram and qqplot showed that normality assumption of residuals is satisfied. Furthermore, residuals vs. covariates, and residuals vs. fitted values graphs showed that the relationships are indeed linear and that the assumption of constant variance (that is variance of residuals is constant for all values of independent variables) seems reasonable here. Therefore, the model seems to be well specified.
+
+## Question 2
+
+
+```{r}
+# setwd("/Users/siddhantarora/Desktop/HEC/Fall 2022/Stats Modelling/Final Project")
+# df_bank = read.csv("/Users/siddhantarora/Desktop/HEC/Fall 2022/Stats Modelling/Final Project/bank.csv",
+#                   sep = ";", header = TRUE)
+
+df_bank = read.csv("bank.csv",
+                   sep = ";", header = TRUE)
+```
+
+
+**Part a)**
+
+**Perform a comprehensive exploratory data analysis (EDA) to obtain a better understanding of the dataset and perform necessary manipulations, if needed. Comment.**
+
+
+```{r}
+summary(df_bank)
+sum(is.na(df_bank))
+dim(df_bank)
+str(df_bank)
+head(df_bank)
+
+#Converting character values to factors
+col_list <- c("job", "marital","education", "default", "housing","loan", 
+              "contact","month", "poutcome","y")
+for (col in col_list) {
+  df_bank[[col]] <- as.factor(df_bank[[col]])
+}
+```
+
+**Correlations**
+
+```{r}
+num_list <- df_bank[,c(1,6,10,12,13,14,15)]
+library(corrplot)
+C <- cor(num_list)
+corrplot(C, method="circle")
+```
+
+We can see that pdays and previous have a high correlation. This suggests that at the time of model building, it is best to include either one of them.
+
+
+**Distribution of the variables**
+
+```{r}
+#Job
+library(ggplot2)
+AA <- ggplot(df_bank, aes(job))
+AA <- AA  + geom_histogram(stat="count") + labs(title = "Job")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+AA
+table(df_bank$job)
+round((prop.table(table(df_bank$job))*100),1)
+```
+
+Approximately 60% of the jobs fall into just 3 categories in our dataset: management, blue-collar and technician, suggesting that the variable is not that well-balanced across all levels of the job.
+
+
+```{r}
+#Marital
+
+BB <- ggplot(df_bank, aes(marital))
+BB <- BB  + geom_histogram(stat="count") + labs(title = "Marital")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+BB
+table(df_bank$marital)
+round((prop.table(table(df_bank$marital))*100),1)
+```
+
+Majority individuals are married. This variable is relatively well balanced if we group single with divorced.
+
+
+```{r}
+#Default
+
+CC <- ggplot(df_bank, aes(default))
+CC <- CC  + geom_histogram(stat="count") + labs(title = "Default")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+CC
+table(df_bank$default)
+round((prop.table(table(df_bank$default))*100),1)
+```
+
+There is only 1.7% of the individuals who have defaulted. The variable's predictive power would be very less, given that the distribution is highly unbalanced.
+
+
+```{r}
+#Education
+
+DD <- ggplot(df_bank, aes(education))
+DD <- DD + geom_histogram(stat="count") + labs(title = "Education")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+DD
+table(df_bank$education)
+round((prop.table(table(df_bank$education))*100),1)
+```
+
+51% of the individuals have a secondary education. There are some unknown observations but they are very less (4.1%) and probably they should not hamper the modelling results. 
+
+
+```{r}
+#Loan
+
+EE <- ggplot(df_bank, aes(loan))
+EE <- EE + geom_histogram(stat="count") + labs(title = "Loan")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+EE
+table(df_bank$loan)
+round((prop.table(table(df_bank$loan))*100),1)
+```
+
+Approximately 85% of the individuals did not have a personal loan.
+
+
+```{r}
+#Housing
+
+FF <- ggplot(df_bank, aes(housing))
+FF <- FF + geom_histogram(stat="count") + labs(title = "Housing Loan")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+FF
+table(df_bank$housing)
+round((prop.table(table(df_bank$housing))*100),1)
+```
+
+The distribution here is very well balanced between the individuals who have a housing loan vs. who have no housing loan.
+
+
+```{r}
+#Contact
+
+GG <- ggplot(df_bank, aes(contact))
+GG <- GG + geom_histogram(stat="count") + labs(title = "Contact")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+GG
+table(df_bank$contact)
+round((prop.table(table(df_bank$contact))*100),1)
+```
+
+64.1% of the individuals were contacted via cellular means whereas only approx. 7% were contacted via telephone with 30% unknown data.
+
+
+```{r}
+#Month
+
+HH <- ggplot(df_bank, aes(month))
+HH <- HH + geom_histogram(stat="count") + labs(title = "Month")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+HH
+table(df_bank$month)
+round((prop.table(table(df_bank$month))*100),1)
+```
+
+Majority of the individuals were contacted mostly during the summer months with a sizable portion in the month of May (30.9%). It might show that contacting people during certain months can have a favorable or unfavorable impact on the bank's marketing campaign to subscribe to term deposits.
+
+
+```{r}
+#Poutcome
+
+II <- ggplot(df_bank, aes(poutcome))
+II <- II + geom_histogram(stat="count") + labs(title = "Poutcome")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+II
+table(df_bank$poutcome)
+round((prop.table(table(df_bank$poutcome))*100),1)
+```
+
+
+The value is unknown for 82% of the individuals. We could treat these unknowns as missing data (NA), however, these unknowns could be the individuals which the bank has not contacted yet. Therefore, first it is important to check the relation of this variable with our target variable (y) to see how many individuals from this unknown category subscribe to the term deposit.
+
+
+```{r}
+#distribution of the response variable y
+
+JJ <- ggplot(df_bank, aes(y))
+JJ <- JJ + geom_histogram(stat="count") + labs(title = "Response Variable: y")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+JJ
+table(df_bank$y)
+round((prop.table(table(df_bank$y))*100),1)
+```
+
+Only around 11.5% of respondents to the current campaign have subscribed to the bank's term deposit. This suggests that the dataset is unbalanced.
+
+
+```{r}
+#Age
+
+KK <- ggplot(df_bank, aes(age))
+KK <- KK + geom_histogram(stat="count") + labs(title = "Age")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+KK
+```
+
+The distribution here seems to be fairly balanced where the majority individuals are aged between 25 to 50 years old.
+
+```{r}
+#Balance
+library(ggplot2)
+LL <- ggplot(df_bank, aes(balance))
+LL <- LL + geom_histogram(stat="count") + labs(title = "Balance") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) + 
+  xlim(c(0,20000)) + ylim(c(0,25))
+LL
+median(df_bank$balance)
+```
+
+The distribution here is very skewed to the right as we can see. We have very high values as well which suggests we will have to deal with outliers. Compared to all the values, the median here is only 444 which is close to zero which suggests that most of the individuals contacted have close to zero balance.
+
+
+```{r}
+#Campaign
+
+MM <- ggplot(df_bank, aes(campaign))
+MM <- MM + geom_histogram(stat="count") + labs(title = "Campaign")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+MM
+```
+
+The distribution here is again skewed to the right with majority of the individuals being contacted only once or twice during this campaign.
+
+
+```{r}
+#Day
+
+NN <- ggplot(df_bank, aes(day))
+NN <- NN + geom_histogram(stat="count") + labs(title = "Day")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+NN
+mean(df_bank$day)
+median(df_bank$day)
+```
+
+The distribution here is very uniform with mean of approx. 15.9 almost equal to median of 16.
+
+
+```{r}
+#Duration
+
+OO <- ggplot(df_bank, aes(duration))
+OO <- OO + geom_histogram(stat="count") + labs(title = "Duration")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+OO
+median(df_bank$duration)
+```
+
+We have some big values here with a right skewed distribution. The median here is 185 seconds (close to 3 minutes), which suggests that most individuals decide about subscrbing to a term deposit or not within the first 3 to 4 minutes of the call duration.
+
+
+```{r}
+#Pdays
+
+PP <- ggplot(df_bank, aes(pdays))
+PP <- PP + geom_histogram(stat="count") + labs(title = "Pdays")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+PP
+median(df_bank$pdays)
+```
+
+The distribution is extremely skewed with a median of perhaps -1. This value means those individuals who have never been contacted before this campaign, that is, most of the individuals were contacted for the very first time during this campaign.
+
+
+```{r}
+#Previous
+
+QQ <- ggplot(df_bank, aes(previous))
+QQ <- QQ + geom_histogram(stat="count") + labs(title = "Previous")+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+QQ
+median(df_bank$previous)
+```
+
+This corroborates with the previous graph (pdays) which suggests that there was no communication before with the individuals contacted during this campaign (Median = 0).
+
+
+
+**Analysis of the independent variables in relation to the response variable**
+
+```{r}
+# Job and y
+
+library(ggplot2)
+A <- ggplot(df_bank, aes(job,fill = y))
+A <- A + geom_histogram(stat="count") + labs(title = "job and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+A
+
+```
+
+We can see that individuals with management job are the ones who have subscribed the maximum to a term deposit followed by technicians.
+
+
+```{r}
+#Marital and y
+
+B <- ggplot(df_bank, aes(marital,fill = y))
+B <- B + geom_histogram(stat="count") + labs(title = "marital and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+B
+```
+
+Married individuals have more tendency to subscribe to a term deposit.
+
+
+```{r}
+#Education and y
+
+C <- ggplot(df_bank, aes(education,fill = y))
+C <- C + geom_histogram(stat="count") + labs(title = "education and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+C
+```
+
+Individuals with secondary education subscribe the most to a term deposit.
+
+
+```{r}
+#Default and y
+
+D <- ggplot(df_bank, aes(default,fill = y))
+D <- D + geom_histogram(stat="count") + labs(title = "default and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+D
+```
+
+Individuals who have no credits in default subscribe to a term deposit whereas for individulas who have credits in default hardly subscribe.
+
+
+```{r}
+#Housing and y
+
+E <- ggplot(df_bank, aes(housing,fill = y))
+E <- E + geom_histogram(stat="count") + labs(title = "housing and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+E
+```
+
+Individuals who do not have a housing loan tend to subsribe more to a term deposit compared to the individuals who have a housing loan.
+
+
+```{r}
+#Loan and y
+
+F <- ggplot(df_bank, aes(loan,fill = y))
+F <- F + geom_histogram(stat="count") + labs(title = "loan and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+F
+```
+
+Individuals who do not have a personal loan subscribe more to a term deposit.
+
+
+```{r}
+#Contact and y
+
+G <- ggplot(df_bank, aes(contact,fill = y))
+G <- G + geom_histogram(stat="count") + labs(title = "contact and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+G
+```
+
+When the contact communication type was Cellular, individuals subscribed more to the bank's term deposit.
+
+
+```{r}
+#poutcome and y
+
+H <- ggplot(df_bank, aes(poutcome,fill = y))
+H <- H + geom_histogram(stat="count") + labs(title = "poutcome and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+H
+```
+
+When the outcome of the previous marketing campaign was a success, individuals subscribe more to the term deposit. However, as mentioned before, the unknown category might represent the new individuals and they are the ones who subscribe the most to the term deposits. Therefore, it's best to keep this category in for the time being we reach the modelling stage.
+
+
+```{r}
+#age and y
+
+I <- ggplot(df_bank, aes(age,fill = y))
+I <- I + geom_histogram(stat="count") + labs(title = "age and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+I
+```
+
+Individuals of age 25-45 years old subscribe the most to term deposits. The same age group has also the highest counts of not subscribing to the term deposit. This suggests that individuals in this age range are contacted the most due to their high presence in our dataset.
+
+
+```{r}
+#balance and y
+library(dplyr)
+y_yes <- df_bank %>% filter(df_bank$y =="yes")
+y_no <- df_bank %>% filter(df_bank$y =="no")
+
+J <- ggplot(y_yes, aes(balance))
+J <- J + geom_histogram(stat="count", binwidth=10) + labs(title = "balance and y_yes") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) + 
+  xlim(c(0,3000)) + ylim(c(0,25))
+J
+
+K <- ggplot(y_no, aes(balance))
+K <- K + geom_histogram(stat="count", binwidth=10) + labs(title = "balance and y_no") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) + 
+  xlim(c(0,3000)) + ylim(c(0,25))
+K
+```
+
+Overall, these two graphs show that individuals who have very low balance don't usually subscribe to a term deposit and very very few people with a low balance actually subscribe for the deposit.
+
+
+```{r}
+#duration and y
+
+L <- ggplot(df_bank, aes(duration,fill = y))
+L <- L + geom_histogram(stat="count") + labs(title = "duration and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ 
+  xlim(c(0,1000))
+L
+```
+
+
+We can observe from the graph that the individuals who do not wish to subscribe for the term deposit are able to decide the same within the first few minutes of the call and those who wish to subscribe for the deposit usually take longer.
+
+This variable has an interesting impact as it highly affects the the response variable. When the duration = 0, then y is always = no i.e. that is there is no term deposit subscription. Yet, the duration is not known before making the call. Also, after the end of the call, y is obviously known. Therefore, in order to have a realistic predictive model, this variable should be discarded from the analysis.
+
+
+```{r}
+#month and y
+
+M <- ggplot(df_bank, aes(month,fill = y))
+M <- M + geom_histogram(stat="count") + labs(title = "month and y") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+M
+```
+
+In the months of May and August, individuals tend to subscribe more to term deposits.
+
+We can similarly check the relation of other numerical variables such as previous, campaign, pdays with the response variable y.
+
+
+**Treatment of outliers**
+
+From the analysis done before, we saw that some of the variables have outliers and it is important to deal with them before we proceed with the actual modelling. A very common method of outliers which we can use here is capping where the outliers below the 5th percentile and above the 95th percentile are capped.
+
+As observed, we can perform this capping on the following numeric variables: balance, campaign, pdays and previous.
+
+```{r}
+library(dlookr)
+df_bank$balance <- imputate_outlier(df_bank, balance, method = "capping")
+df_bank$campaign <- imputate_outlier(df_bank, campaign, method = "capping")
+df_bank$pdays <- imputate_outlier(df_bank, pdays, method = "capping")
+df_bank$previous <- imputate_outlier(df_bank, previous, method = "capping")
+```
+
+
+**Treatment of Categorical Variables**
+
+As seen before, for some of the categorical variables (Marital, Month and Job), the distribution could be improved to have a better predictive performance if we group some of the similar levels together into new broader levels.
+
+```{r , results='hide'}
+library(rockchalk)
+df_bank$marital <- combineLevels(df_bank$marital, levs = c("single", "divorced"),
+                                 newLabel = "unmarried")
+
+df_bank$month <- combineLevels(df_bank$month, levs = c("aug", "sep","oct"), 
+                               newLabel = "Autumn")
+df_bank$month <- combineLevels(df_bank$month, levs = c("nov", "dec", "jan", 
+                                                       "feb", "mar"), 
+                               newLabel = "Winter")
+df_bank$month <- combineLevels(df_bank$month, levs = c("apr","may", "jun", "jul"),
+                               newLabel = "Summer")
+
+df_bank$job <- combineLevels(df_bank$job, levs = c("unemployed", 
+                                                   "retired", "student"), 
+                             newLabel = "Not Employed")
+df_bank$job <- combineLevels(df_bank$job, levs = c("admin.", "management"), 
+                             newLabel = "admin and mgnt")
+df_bank$job <- combineLevels(df_bank$job, levs = c("blue-collar", "technician"), 
+                             newLabel = "blue-collar")
+df_bank$job <- combineLevels(df_bank$job, levs = c("housemaid", "services"), 
+                             newLabel = "service class")
+df_bank$job <- combineLevels(df_bank$job, levs = c("entrepreneur", 
+                                                   "self-employed"), 
+                             newLabel = "self-employed")
+```
+
+
+**Brief Conclusion**
+
+Based on the exploratory data analysis (EDA) done, we have decided to remove two variables from the modelling stage: pdays (since it is highly correlated to the variable previous) and duration (since it highly affects the target variable i.e. if duration = 0 then y = no). Outliers have been dealt with. For the categorical variables, some of the similar levels have been grouped to improve their distribution. The response variable could have been treated as well by making it more balanced by using some advanced packages such as DMwR (function SMOTE), ROSE etc. as a part of advanced EDA but this has not been done here.
+
+
+**Part b)**
+
+**Fit a regression model (as appropriate) using 'y' as the response variable. Model y in terms of age, job, marital and default. Provide the model summary results and write an equation for the fitted model on log-odds scale.**
+
+```{r}
+df_bank$y <- ifelse(df_bank$y == "yes", 1, 0)
+```
+
+```{r}
+mod1 <- glm(y ~ age + job + marital + default, data=df_bank,
+          family=binomial(link="logit"))
+summary(mod1)
+exp(mod1$coefficients)
+```
+
+Fitted model equation on log-odds scale:
+
+$\hat{log(odds(y=1|age,job,marital,default))}$ = -2.212279 + 0.012848age - 0.047775jobNot Employed -0.422589jobadmin and mgnt -0.816166jobblue-collar -0.730414jobservice class -0.666107jobself-employed + 0.467715maritalunmarried + 0.008619defaultyes
+
+
+**Part c)**
+
+**Based on the model in part b), interpret the regression coefficients for the variables age and default on an appropriate scale.**
+
+Interpretation of regression coefficient associated with the variable age
+
+exp($\hat{\beta_1}$) = 1.0129306. It represents the multiplicative effect of age on the odds ratio of subscribing to a term deposit, holding all other variables constant. It is estimated as exp(0.012848) = 1.0129306, i.e. for every one year increase in age the odds of subscribing to a term deposit increases by 1.3%, keeping all other variables unchanged.
+
+Interpretation of regression coefficient associated with the variable default
+
+exp($\hat{\beta_8}$) = 1.0086559. It represents the odds ratio of subscribing to a term deposit for an individual who has defaulted in comparison to an individual who has not defaulted, keeping all other variables fixed. It is estimated as exp(0.008619) = 1.0086559 that is the odds of subscribing to a term deposit are 1.0086559 times higher for individuals who have defaulted compared to individuals who haven't defaulted, holding all other variables unchanged.
+
+
+**Part d)**
+
+**Based on the model in part b), what is the estimated odds that an unmarried self-employed individual who is 30 years old and has defaulted will subscribe for the term deposit? What is the estimated probability that a married blue-collared individual who is 50 years old and has not defaulted will subscribe for the term deposit?**
+
+
+**Estimated odds**
+
+$\hat{odds(y=1|Marital=unmarried, job=self-employed, age=30, default=yes)}$ = exp($\hat{\beta_0}$ + $\hat{\beta_1}$*30 + $\hat{\beta_6}$ + $\hat{\beta_8}$)
+
+= exp(-2.212279 + 0.012848*30 - 0.666107 + 0.008619)
+
+= exp(-2.484327)
+
+= 0.08338165
+
+Therefore, the estimated odds that an unmarried self-employed individual who is 30 years old and has defaulted will subscribe for the term deposit is 0.08338165.
+
+
+**Estimated Probability**
+
+$\hat{P(y=1|Marital=married, job=blue-collar, age=50, default=no)}$ = $\frac{exp(\hat\beta_0+\hat\beta_1*50+\hat\beta_4)}{1+exp(\hat\beta_0+\hat\beta_1*50+\hat\beta_4)}$ 
+
+= $\frac{exp(-2.212279+0.012848*50-0.816166)}{1+exp(-2.212279+0.012848*50-0.816166)}$ 
+
+= $\frac{exp(-2.386045)}{1+exp(-2.386045)}$
+
+= = $\frac{0.0919928}{1+0.0919928}$
+
+= 0.08424303
+
+Therefore, the estimated probability that a married blue-collared individual who is 50 years old and has not defaulted will subscribe for the term deposit is 0.08424303.
+
+
+**Part e)**
+
+**Fit another model which includes the variables age, default, balance, marital, job, campaign and an interaction between balance and marital. Provide the model summary results as obtained in R and write an equation for the fitted model on odds scale.**
+
+```{r}
+mod2 <- glm(y ~ age+ default + balance + marital + job + campaign + balance*marital, data=df_bank,
+          family=binomial(link="logit"))
+summary(mod2)
+exp(mod2$coefficients)
+```
+
+Fitted model equation on odds scale:
+
+$\hat{odds(y=1|balance,marital,job,campaign)}$ = exp(-2.025e+00 + 1.188e-02age + 1.206e-01defaultyes + 8.794e-05balance + 4.951e-01maritalunmarried - 7.728e-02jobNot Employed - 4.187e-01jobadmin and mgnt - 7.980e-01jobblue-collar - 7.206e-01jobservice class - 6.576e-01jobself-employed - 1.149e-01campaign - 2.422e-05balance*maritalunmarried)
+
+
+**Part f)**
+
+**Based on the model in part e), interpret the regression coefficients with the main effects of variables balance and marital on an appropriate scale.**
+
+Interpretation of regression coefficient associated with the main effect of variable balance
+
+exp($\hat{\beta_3}$) = 1.0000879. For every one dollar increase in the balance for a married individual, the odds of subscribing to a term deposit is multiplied by a factor of exp(8.794e-05) = 1.0000879, when all other variables remain unchanged.
+
+Interpretation of regression coefficient associated with the main effect of variable marital
+
+exp($\hat{\beta_4}$) = 1.6407274. It represents the odds ratio of subscribing to a term deposit which is multiplied by a factor of exp(4.951e-01) = 1.6407274 for an unmarried individual who has a balance of 0 in his/her bank account, keeping all other variables fixed.  
+
+
+**Part g)**
+
+**What is the estimated odds ratio for a 25 year old married service class individual who has a balance of 1000, has been contacted 3 times during this campaign and has defaulted vs. a 40 year old unmarried blue-collar individual who has a balance of 5000 dollars, has been contacted once during this campaign and has not defaulted?**
+
+Estimated odds ratio is calculated as follows:
+
+$\frac{odds(y=1|age=25, default=yes, balance=1000, marital=married, job=service class, campagin=3)}{odds(y=1|age=40, default=no, balance=5000, marital=unmarried, job=blue-collar, campagin=1)}$
+
+= $\frac{exp(\hat\beta_0+\hat\beta_1*25+\hat\beta_2+\hat\beta_3*1000+\hat\beta_8+\hat\beta_{10}*3)}{exp(\hat\beta_0+\hat\beta_1*40+\hat\beta_3*5000+\hat\beta_4+\hat\beta_7+\hat\beta_{10}*1+\hat\beta_{11}*5000*1)}$
+
+= $\frac{exp(-2.025e+00+1.188e-02*25+1.206e-01+8.794e-05*1000-7.206e-01-1.149e-01*3)}{exp(-2.025e+00+1.188e-02*40+8.794e-05*5000+4.951e-01-7.980e-01-1.149e-01*1-2.422e-05*5000*1)}$
+
+= $\frac{0.07541418}{0.1922421}$
+
+= 0.3922875
+
+Therefore, the estimated odds ratio for a 25 year old married service class individual who has a balance of 1000, has been contacted 3 times during this campaign and has defaulted vs. a 40 year old unmarried blue-collar individual who has a balance of 5000 dollars, has been contacted once during this campaign and has not defaulted is 0.3922875.
+
+
+**Part h)**
+
+**Formally compare the models in parts b) and e) using analysis of deviance. What is your conclusion? Which model will you select on the basis of AIC and BIC?**
+
+```{r}
+anova(mod1,mod2,test="Chisq")
+mod1$aic
+mod2$aic
+BIC(mod1)
+BIC(mod2)
+```
+
+
+From the output above, our simplified model is Model 1 which includes 4 variables: age, job, marital and default. We want to test if Model 1 is an adequate simplification of the complete model (Model 2) which apart from these variables also includes balance, campaign and an interaction between balance and marital.
+
+Hypothesis is defined as follows:
+
+${H_0}$ : ${\beta_3}$ = ${\beta_{10}}$ = ${\beta_{11}}$ = 0
+
+${H_1}$ : at least one of ${\beta_3}$, ${\beta_{10}}$, ${\beta_{11}}$ $\neq$ 0
+
+Deviance = 30.508
+
+p-value = 1.079e-06
+
+Since the p-value is much lower than any reasonable $\alpha$, we can reject the null hypothesis and conclude that Model 1 is NOT an adequate simplification of the complete model (Model 2).
+
+Since both AIC (3157.095 < 3181.603) and BIC (3234.093 < 3239.352) values are lower for Model 2, therefore Model 2 should be selected.
